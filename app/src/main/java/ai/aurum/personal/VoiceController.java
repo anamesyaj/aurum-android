@@ -269,14 +269,10 @@ public final class VoiceController {
             }
 
             @Override
-            public void onRmsChanged(float rmsdB) {
-                // A3 intentionally avoids recording or persisting microphone samples.
-            }
+            public void onRmsChanged(float rmsdB) {}
 
             @Override
-            public void onBufferReceived(byte[] buffer) {
-                // Raw microphone audio is never stored by Aurum A3.
-            }
+            public void onBufferReceived(byte[] buffer) {}
 
             @Override
             public void onEndOfSpeech() {
@@ -321,9 +317,7 @@ public final class VoiceController {
             }
 
             @Override
-            public void onEvent(int eventType, Bundle params) {
-                // Reserved by Android for recognizer-specific events.
-            }
+            public void onEvent(int eventType, Bundle params) {}
 
             @Override
             public void onLanguageDetection(Bundle results) {
@@ -390,9 +384,13 @@ public final class VoiceController {
 
     private Locale selectTtsLocale() {
         Set<Locale> candidates = new LinkedHashSet<>();
-        candidates.add(Locale.getDefault());
+
+        // Aurum's primary conversational voice is Filipino/Taglish. Prefer the explicit
+        // Philippine voices before Locale.getDefault(); the Android UI language can be en-US
+        // even when the user's Text-to-speech setting is Filipino (Philippines).
         candidates.add(Locale.forLanguageTag("fil-PH"));
         candidates.add(Locale.forLanguageTag("en-PH"));
+        candidates.add(Locale.getDefault());
         candidates.add(Locale.US);
 
         for (Locale locale : candidates) {
@@ -402,7 +400,7 @@ public final class VoiceController {
                 int result = textToSpeech.setLanguage(locale);
                 if (result >= TextToSpeech.LANG_AVAILABLE) return locale;
             } catch (RuntimeException ignored) {
-                // Try the next device/Filipino/English fallback.
+                // Try the next Filipino/Philippine/device/English fallback.
             }
         }
         return null;
@@ -412,9 +410,7 @@ public final class VoiceController {
         if (textToSpeech == null) return;
         try {
             textToSpeech.stop();
-        } catch (RuntimeException ignored) {
-            // Treat stop as best-effort and preserve UI state.
-        }
+        } catch (RuntimeException ignored) {}
         if (ttsReady) {
             VoiceRuntimeState.setTtsState("ready (" + ttsLocaleTag + ")");
         }
