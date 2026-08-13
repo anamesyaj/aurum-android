@@ -39,7 +39,7 @@ public final class DiagnosticsReport {
         String defaultSpeechLocale = Locale.getDefault().toLanguageTag();
 
         return "Aurum Android Diagnostics\n"
-                + "Milestone: A3.1 Filipino Voice + Auto Reply Speech\n"
+                + "Milestone: A3.2 Natural Filipino Voice\n"
                 + "App version: " + versionName + " (" + versionCode + ")\n"
                 + "Build commit: " + BuildConfig.GIT_SHA + "\n"
                 + "Build type: " + BuildConfig.BUILD_TYPE + "\n"
@@ -50,7 +50,7 @@ public final class DiagnosticsReport {
                 + "Permissions: "
                 + (permissions.isEmpty() ? "none" : String.join(", ", permissions))
                 + "\n"
-                + "Aurum services: A3.1 authenticated text + foreground push-to-talk + auto-spoken replies\n"
+                + "Aurum services: A3.2 authenticated text + push-to-talk + Core neural/local Filipino speech\n"
                 + "Backend: " + BackendConfig.diagnosticBackend(context) + "\n"
                 + "Connection: " + BackendConfig.loadConnectionState(context) + "\n"
                 + "Remote authentication: "
@@ -58,14 +58,14 @@ public final class DiagnosticsReport {
                     ? "access key configured in Android Keystore"
                     : "access key not configured")
                 + "\n"
-                + "Voice mode: one-shot push-to-talk; replies auto-speak; no always-on/background microphone\n"
+                + "Voice mode: one-shot push-to-talk; replies auto-speak; Core neural with local fallback\n"
                 + "Microphone permission: " + (microphoneGranted ? "granted" : "not granted") + "\n"
                 + "Speech recognizer: " + (recognitionAvailable ? "available" : "unavailable") + "\n"
                 + "Speech locale: device default (" + defaultSpeechLocale + ")\n"
                 + "Detected speech language: " + VoiceRuntimeState.detectedLanguage() + "\n"
                 + "Speech state: " + VoiceRuntimeState.speechState() + "\n"
                 + "TTS state: " + VoiceRuntimeState.ttsState() + "\n"
-                + "TTS preference: fil-PH -> en-PH -> device default -> en-US\n"
+                + "TTS preference: Core neural -> best fil-PH voice -> en-PH -> device default -> en-US\n"
                 + "Wake: not enabled in A3\n"
                 + "Secrets included: no\n";
     }

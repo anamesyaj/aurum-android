@@ -12,8 +12,8 @@ android {
         applicationId = "ai.aurum.personal"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.3.1-a3"
+        versionCode = 6
+        versionName = "0.3.2-a3"
         buildConfigField("String", "GIT_SHA", "\"$sourceSha\"")
         manifestPlaceholders["usesCleartextTraffic"] = "false"
     }

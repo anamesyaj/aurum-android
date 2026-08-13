@@ -39,6 +39,7 @@ public final class MainActivity extends Activity {
 
     private boolean conversationBusy;
     private String lastAurumReply = "";
+    private int speechRequestGeneration;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,6 +81,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
+        speechRequestGeneration++;
         if (voiceController != null) {
             // A3 is deliberately foreground push-to-talk only. Do not retain microphone
             // ownership or TTS playback after the activity leaves the foreground.
@@ -137,7 +139,7 @@ public final class MainActivity extends Activity {
         content.addView(title);
 
         TextView milestone = new TextView(this);
-        milestone.setText("Android A3.1 • Filipino Voice");
+        milestone.setText("Android A3.2 • Natural Filipino Voice");
         milestone.setTextSize(17f);
         milestone.setPadding(0, dp(6), 0, dp(10));
         content.addView(milestone);
@@ -236,7 +238,7 @@ public final class MainActivity extends Activity {
 
         transcriptView = new TextView(this);
         transcriptView.setText(
-                "Aurum A3.1 is ready. Replies are spoken automatically when Android TTS is ready.\n"
+                "Aurum A3.2 is ready. Core neural speech is preferred; Filipino Android TTS remains the fallback.\n"
         );
         transcriptView.setTextSize(15f);
         transcriptView.setTextIsSelectable(true);
@@ -374,6 +376,7 @@ public final class MainActivity extends Activity {
     }
 
     private void stopVoice() {
+        speechRequestGeneration++;
         if (voiceController != null) voiceController.stopAll();
         voiceTranscriptView.setText("Voice stopped.");
         refreshVoiceUi();
@@ -389,7 +392,40 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, "Android TextToSpeech is not ready", Toast.LENGTH_LONG).show();
             return;
         }
-        voiceController.speak(lastAurumReply);
+        speakReply(lastAurumReply);
+    }
+
+    private void speakReply(String reply) {
+        if (reply == null || reply.trim().isEmpty() || voiceController == null) return;
+        final String speechText = reply.trim();
+        final int generation = ++speechRequestGeneration;
+        String baseUrl = BackendConfig.loadBaseUrl(this);
+        String accessKey = BackendCredentialStore.loadAccessToken(this);
+        if (baseUrl.trim().isEmpty() || accessKey.trim().isEmpty()) {
+            voiceController.speak(speechText);
+            return;
+        }
+
+        VoiceRuntimeState.setTtsState("requesting Core neural voice");
+        refreshVoiceUi();
+        refreshDiagnostics();
+        apiClient.synthesizeSpeech(baseUrl, accessKey, speechText, new AurumApiClient.AudioCallback() {
+            @Override
+            public void onSuccess(byte[] audio, String contentType) {
+                runOnUiThread(() -> {
+                    if (generation != speechRequestGeneration || voiceController == null) return;
+                    voiceController.playNeuralAudio(audio);
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> {
+                    if (generation != speechRequestGeneration || voiceController == null) return;
+                    voiceController.speak(speechText);
+                });
+            }
+        });
     }
 
     private void saveBackend() {
@@ -483,11 +519,8 @@ public final class MainActivity extends Activity {
                             lastAurumReply = reply == null ? "" : reply.trim();
                             appendTranscript("Aurum", lastAurumReply);
                             refreshVoiceUi();
-                            if (speakReply
-                                    && voiceController != null
-                                    && voiceController.isTtsReady()
-                                    && !lastAurumReply.isEmpty()) {
-                                voiceController.speak(lastAurumReply);
+                            if (speakReply && !lastAurumReply.isEmpty() && voiceController != null) {
+                                speakReply(lastAurumReply);
                             }
                         });
                     }

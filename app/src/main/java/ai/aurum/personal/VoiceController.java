@@ -8,13 +8,19 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.media.MediaPlayer;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.speech.tts.Voice;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -38,6 +44,9 @@ public final class VoiceController {
     private TextToSpeech textToSpeech;
     private boolean ttsReady;
     private String ttsLocaleTag = "unknown";
+    private String ttsVoiceLabel = "default";
+    private MediaPlayer neuralPlayer;
+    private File neuralAudioFile;
 
     public VoiceController(Context context, Listener listener) {
         this.appContext = context.getApplicationContext();
@@ -179,6 +188,53 @@ public final class VoiceController {
         }
     }
 
+    public void playNeuralAudio(byte[] audio) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(() -> playNeuralAudio(audio));
+            return;
+        }
+        if (audio == null || audio.length == 0) {
+            listener.onSpeechError("Neural voice returned no audio");
+            return;
+        }
+
+        cancelListening();
+        stopSpeakingInternal();
+        try {
+            neuralAudioFile = File.createTempFile("aurum-neural-", ".mp3", appContext.getCacheDir());
+            try (FileOutputStream output = new FileOutputStream(neuralAudioFile)) {
+                output.write(audio);
+            }
+            MediaPlayer player = new MediaPlayer();
+            neuralPlayer = player;
+            player.setDataSource(neuralAudioFile.getAbsolutePath());
+            player.setOnPreparedListener(prepared -> {
+                VoiceRuntimeState.setTtsState("speaking (Core neural)");
+                notifyVoiceState();
+                prepared.start();
+            });
+            player.setOnCompletionListener(completed -> {
+                cleanupNeuralPlayer();
+                setLocalReadyState();
+            });
+            player.setOnErrorListener((failed, what, extra) -> {
+                cleanupNeuralPlayer();
+                VoiceRuntimeState.setTtsState("error: neural playback failed");
+                notifyVoiceState();
+                listener.onSpeechError("Neural voice playback failed");
+                return true;
+            });
+            VoiceRuntimeState.setTtsState("loading Core neural voice");
+            notifyVoiceState();
+            player.prepareAsync();
+        } catch (IOException | RuntimeException exception) {
+            cleanupNeuralPlayer();
+            VoiceRuntimeState.setTtsState("error: neural playback failed");
+            notifyVoiceState();
+            listener.onSpeechError("Neural voice playback failed");
+        }
+    }
+
     public void stopAll() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post(this::stopAll);
@@ -208,6 +264,8 @@ public final class VoiceController {
             speechRecognizer = null;
         }
         listening = false;
+
+        cleanupNeuralPlayer();
 
         if (textToSpeech != null) {
             textToSpeech.stop();
@@ -377,9 +435,9 @@ public final class VoiceController {
         }
 
         ttsLocaleTag = selected.toLanguageTag();
+        selectBestTtsVoice(selected);
         ttsReady = true;
-        VoiceRuntimeState.setTtsState("ready (" + ttsLocaleTag + ")");
-        notifyVoiceState();
+        setLocalReadyState();
     }
 
     private Locale selectTtsLocale() {
@@ -406,15 +464,69 @@ public final class VoiceController {
         return null;
     }
 
-    private void stopSpeakingInternal() {
+    private void selectBestTtsVoice(Locale selectedLocale) {
+        ttsVoiceLabel = "default";
         if (textToSpeech == null) return;
         try {
-            textToSpeech.stop();
-        } catch (RuntimeException ignored) {}
-        if (ttsReady) {
-            VoiceRuntimeState.setTtsState("ready (" + ttsLocaleTag + ")");
+            Set<Voice> voices = textToSpeech.getVoices();
+            if (voices == null || voices.isEmpty()) return;
+            Voice best = voices.stream()
+                    .filter(voice -> sameLocaleFamily(voice.getLocale(), selectedLocale))
+                    .max(Comparator
+                            .comparingInt(Voice::getQuality)
+                            .thenComparingInt(voice -> voice.isNetworkConnectionRequired() ? 1 : 0)
+                            .thenComparingInt(voice -> -voice.getLatency()))
+                    .orElse(null);
+            if (best == null) return;
+            if (textToSpeech.setVoice(best) == TextToSpeech.SUCCESS) {
+                ttsLocaleTag = best.getLocale().toLanguageTag();
+                ttsVoiceLabel = "q" + best.getQuality()
+                        + (best.isNetworkConnectionRequired() ? "-network" : "-local");
+            }
+        } catch (RuntimeException ignored) {
+            // Locale-level fallback remains valid even when the engine hides its voice list.
         }
+    }
+
+    private static boolean sameLocaleFamily(Locale voiceLocale, Locale targetLocale) {
+        if (voiceLocale == null || targetLocale == null) return false;
+        if (!voiceLocale.getLanguage().equalsIgnoreCase(targetLocale.getLanguage())) return false;
+        String targetCountry = targetLocale.getCountry();
+        return targetCountry.isEmpty()
+                || voiceLocale.getCountry().isEmpty()
+                || voiceLocale.getCountry().equalsIgnoreCase(targetCountry);
+    }
+
+    private void setLocalReadyState() {
+        if (!ttsReady) return;
+        VoiceRuntimeState.setTtsState(
+                "ready (" + ttsLocaleTag + "; " + ttsVoiceLabel + "; Core neural preferred)"
+        );
         notifyVoiceState();
+    }
+
+    private void cleanupNeuralPlayer() {
+        if (neuralPlayer != null) {
+            try { neuralPlayer.stop(); } catch (RuntimeException ignored) { }
+            try { neuralPlayer.release(); } catch (RuntimeException ignored) { }
+            neuralPlayer = null;
+        }
+        if (neuralAudioFile != null) {
+            try { neuralAudioFile.delete(); } catch (RuntimeException ignored) { }
+            neuralAudioFile = null;
+        }
+    }
+
+    private void stopSpeakingInternal() {
+        cleanupNeuralPlayer();
+        if (textToSpeech != null) {
+            try {
+                textToSpeech.stop();
+            } catch (RuntimeException ignored) {
+                // Treat stop as best-effort and preserve UI state.
+            }
+        }
+        if (ttsReady) setLocalReadyState();
     }
 
     private void notifyVoiceState() {

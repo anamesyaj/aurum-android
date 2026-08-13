@@ -5,6 +5,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -23,11 +24,17 @@ public final class AurumApiClient implements AutoCloseable {
     private static final int READ_TIMEOUT_MS = 25_000;
     private static final int POLL_INTERVAL_MS = 1_000;
     private static final int REPLY_TIMEOUT_MS = 120_000;
+    private static final int MAX_SPEECH_AUDIO_BYTES = 12 * 1024 * 1024;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     public interface Callback {
         void onSuccess(String value);
+        void onError(String message);
+    }
+
+    public interface AudioCallback {
+        void onSuccess(byte[] audio, String contentType);
         void onError(String message);
     }
 
@@ -64,6 +71,24 @@ public final class AurumApiClient implements AutoCloseable {
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 callback.onError("Aurum request was interrupted");
+            } catch (Exception exception) {
+                callback.onError(safeError(exception));
+            }
+        });
+    }
+
+    public void synthesizeSpeech(String baseUrl, String accessToken, String text, AudioCallback callback) {
+        executor.execute(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("text", text == null ? "" : text.trim());
+                BinaryResponse response = requestBytes(
+                        "POST",
+                        endpoint(baseUrl, "/api/remote/speech"),
+                        body.toString(),
+                        accessToken
+                );
+                callback.onSuccess(response.body, response.contentType);
             } catch (Exception exception) {
                 callback.onError(safeError(exception));
             }
@@ -114,6 +139,58 @@ public final class AurumApiClient implements AutoCloseable {
         return "true".equalsIgnoreCase(String.valueOf(raw)) || "1".equals(String.valueOf(raw));
     }
 
+    private static final class BinaryResponse {
+        final byte[] body;
+        final String contentType;
+
+        BinaryResponse(byte[] body, String contentType) {
+            this.body = body;
+            this.contentType = contentType;
+        }
+    }
+
+    private BinaryResponse requestBytes(String method, URL url, String body, String accessToken)
+            throws IOException {
+        if (accessToken == null || accessToken.trim().length() < 32) {
+            throw new IOException("Aurum access key is not configured");
+        }
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod(method);
+        connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        connection.setReadTimeout(45_000);
+        connection.setRequestProperty("Accept", "audio/mpeg");
+        connection.setRequestProperty("Authorization", "Bearer " + accessToken.trim());
+        connection.setRequestProperty("User-Agent", "Aurum-Android-A3");
+        connection.setUseCaches(false);
+
+        if (body != null) {
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            connection.setFixedLengthStreamingMode(bytes.length);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(bytes);
+            }
+        }
+
+        int status = connection.getResponseCode();
+        if (status < 200 || status >= 300) {
+            String response = readAll(connection.getErrorStream());
+            connection.disconnect();
+            throw new IOException(
+                    response == null || response.trim().isEmpty()
+                            ? "HTTP " + status
+                            : compactServerError(response, status)
+            );
+        }
+
+        String contentType = connection.getContentType();
+        byte[] audio = readBytes(connection.getInputStream(), MAX_SPEECH_AUDIO_BYTES);
+        connection.disconnect();
+        if (audio.length == 0) throw new IOException("Aurum Core returned empty speech audio");
+        return new BinaryResponse(audio, contentType == null ? "audio/mpeg" : contentType);
+    }
+
     private String request(String method, URL url, String body, String accessToken) throws IOException {
         if (accessToken == null || accessToken.trim().length() < 32) {
             throw new IOException("Aurum access key is not configured");
@@ -162,6 +239,21 @@ public final class AurumApiClient implements AutoCloseable {
             // Fall through to a generic error; never surface arbitrary server HTML/log output.
         }
         return "HTTP " + status + " from Aurum Core";
+    }
+
+    private static byte[] readBytes(InputStream stream, int maxBytes) throws IOException {
+        if (stream == null) return new byte[0];
+        try (InputStream input = stream; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > maxBytes) throw new IOException("Aurum speech audio is too large");
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
     }
 
     private static String readAll(InputStream stream) throws IOException {
