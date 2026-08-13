@@ -1,0 +1,108 @@
+name: Android CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ""
+
+      - name: Install Android 16 platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle 9.5.0
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "9.5.0"
+
+      - name: Create ephemeral debug signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          rm -f "$HOME/.android/debug.keystore"
+          keytool -genkeypair \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Aurum Public CI,C=PH" \
+            >/dev/null 2>&1
+
+      - name: Test, lint, and build A3 debug APK
+        run: gradle --no-daemon --no-parallel --max-workers=2 clean testDebugUnitTest lintDebug assembleDebug
+
+      - name: Record APK metadata
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          BYTES="$(stat -c%s "$APK")"
+          SHA256="$(sha256sum "$APK" | awk '{print $1}')"
+          {
+            echo "Aurum Android A3"
+            echo "commit=${GITHUB_SHA}"
+            echo "bytes=${BYTES}"
+            echo "sha256=${SHA256}"
+            echo "signing=ephemeral-debug-key"
+          } | tee android-apk-metadata.txt
+          echo "bytes=${BYTES}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload A3 debug APK
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurum-android-a3-${{ github.run_number }}
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            android-apk-metadata.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish build summary
+        shell: bash
+        run: |
+          {
+            echo "## Aurum Android A3"
+            echo "Commit: \`${GITHUB_SHA}\`"
+            echo "APK size: ${{ steps.apk.outputs.bytes }} bytes"
+            echo "APK SHA-256: \`${{ steps.apk.outputs.sha256 }}\`"
+            echo "Signing: ephemeral public-CI debug key; older differently signed APKs may require uninstall/reinstall."
+            echo "Artifact: \`aurum-android-a3-${{ github.run_number }}\`"
+            echo "Artifact URL: ${{ steps.upload.outputs.artifact-url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

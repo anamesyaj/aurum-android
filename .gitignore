@@ -1,0 +1,29 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android local configuration
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Signing material
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local diagnostics/artifacts
+*.apk
+*.aab
+android-apk-metadata.txt
