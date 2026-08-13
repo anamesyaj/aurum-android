@@ -137,15 +137,16 @@ public final class MainActivity extends Activity {
         content.addView(title);
 
         TextView milestone = new TextView(this);
-        milestone.setText("Android A3 • Native Voice");
+        milestone.setText("Android A3.1 • Filipino Voice");
         milestone.setTextSize(17f);
         milestone.setPadding(0, dp(6), 0, dp(10));
         content.addView(milestone);
 
         TextView description = new TextView(this);
         description.setText(
-                "A3 adds foreground push-to-talk speech recognition and Android TextToSpeech "
-                        + "on top of the accepted authenticated Aurum Core conversation path."
+                "A3.1 prefers Filipino/Philippine TextToSpeech and automatically speaks Aurum's "
+                        + "reply after voice or text messages, while keeping foreground push-to-talk "
+                        + "speech recognition on the authenticated Aurum Core conversation path."
         );
         description.setTextSize(15f);
         description.setPadding(0, 0, 0, dp(12));
@@ -235,7 +236,7 @@ public final class MainActivity extends Activity {
 
         transcriptView = new TextView(this);
         transcriptView.setText(
-                "Aurum A3 is ready for authenticated text or foreground push-to-talk voice.\n"
+                "Aurum A3.1 is ready. Replies are spoken automatically when Android TTS is ready.\n"
         );
         transcriptView.setTextSize(15f);
         transcriptView.setTextIsSelectable(true);
@@ -433,7 +434,7 @@ public final class MainActivity extends Activity {
     }
 
     private void sendMessage() {
-        sendMessageText(messageInput.getText().toString().trim(), false);
+        sendMessageText(messageInput.getText().toString().trim(), true);
     }
 
     private void sendMessageText(String text, boolean speakReply) {
@@ -608,7 +609,6 @@ public final class MainActivity extends Activity {
         String safeMessage = message == null ? "" : message.trim();
         String current = transcriptView.getText().toString();
         String updated = current + "\n" + speaker + ": " + safeMessage + "\n";
-        // Keep A3's in-memory view bounded. Durable conversation history remains in Aurum Core.
         if (updated.length() > 24_000) updated = updated.substring(updated.length() - 24_000);
         transcriptView.setText(updated);
     }
