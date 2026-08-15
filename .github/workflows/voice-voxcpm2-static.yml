@@ -1,0 +1,55 @@
+name: Voice VoxCPM2 Static Validation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - tools/voice/voxcpm2_multilingual_benchmark.py
+      - notebooks/aurum_voxcpm2_voice_benchmark.ipynb
+      - .github/workflows/voice-voxcpm2-static.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile benchmark script
+        run: python -m py_compile tools/voice/voxcpm2_multilingual_benchmark.py
+
+      - name: Validate notebook JSON and Python cells
+        run: |
+          python - <<'PY'
+          import ast
+          import json
+          from pathlib import Path
+
+          path = Path('notebooks/aurum_voxcpm2_voice_benchmark.ipynb')
+          notebook = json.loads(path.read_text())
+          assert notebook['nbformat'] == 4
+
+          compiled = 0
+          for i, cell in enumerate(notebook.get('cells', [])):
+              if cell.get('cell_type') != 'code':
+                  continue
+              source = ''.join(cell.get('source', []))
+              # Colab/Jupyter shell-magics are not Python AST; compile the remaining cells.
+              if any(line.lstrip().startswith('!') for line in source.splitlines()):
+                  continue
+              ast.parse(source, filename=f'{path}:cell-{i}')
+              compiled += 1
+
+          print('notebook_python_cells_compiled =', compiled)
+          PY
